@@ -21,7 +21,7 @@ import json
 import arcpy
 import os
 import MODULE_ClearWorkspaceLocks
-import MODULE_survey123download  #this module has the functions used to actually execute the survey123 download. 
+import MODULE_survey123download  #this module has the functions used to actually execute the survey123 download.
 
 dict = {'Form_FieldReconID':'d20962458324416ea077215b8c7b0827', 'Form_FieldReconPATH' : 'S:\Coho\GIS\Data\Survey123_Downloads\Form_FieldRecon',
         'DissolvedOxygenID': '34ec889e9cf04e098b6589855e2a67c0', 'DissolvedOxygenPATH': 'S:\Coho\GIS\Data\Survey123_Downloads\WH_DissolvedOxygen',
@@ -32,6 +32,13 @@ dict = {'Form_FieldReconID':'d20962458324416ea077215b8c7b0827', 'Form_FieldRecon
         'Download_TestID':'44ec578f8afa490fbb35e38a63287c9d', 'Download_TestPATH' : r'S:\Coho\GIS\Data\Survey123_Downloads\DownloadTest',}
 #Dictionary of AGOL Id's and corresponding network paths for survey123 forms. This dictionary needs to be updated as forms are added or
 #changed. Make sure ********ID and ********PATH match eachother and also match the parameter (input_survey) being passed from GIS tool and the form name on AGOL.
+
+#Define Append Function
+def appendSQL(tableName):
+
+
+
+
 
 GDBpath = ""  #defining global variable for listdir search later
 
@@ -138,56 +145,68 @@ for file in os.listdir(parPATH):  #searches through survey folder for downloaded
 
 GDBpath = folderpath + GDBname #string of path to GDB
 
-FC_GDB = GDBpath + '\\' + input_survey  #string of full path for feature class within GDB
+
+
 
 SQL_Shortcut= r"Database Connections\SQL_Temporary.sde\UCCE_Temporary_SQL.dbo."
 
-SQL_fullpath= SQL_Shortcut + input_survey
+
 
 MODULE_ClearWorkspaceLocks.clearWSLocks(GDBpath)  #checks for existing locks on GDB
 
-ExistingPt = []  #list used to received FORMID values for SQL tbl
+ #list used to received FORMID values for SQL tbl
 
-cursor = arcpy.da.SearchCursor(SQL_fullpath, ["FORMID"]) #will need to change this to "unique field in Master_List (in the SN database this is JoinGPSID)
-for row in cursor:
-    FormID = row[0]
-    FormID = FormID.strip()
-    ExistingPt.append(FormID)
-    print ExistingPt
-del cursor
+def appendSQL(tableName):
+	SQL_fullpath= SQL_Shortcut + tableName
+	FC_GDB = GDBpath + '\\' + tableName  #string of full path for feature class within GDB
+	ExistingPt = []
+	cursor = arcpy.da.SearchCursor(SQL_fullpath, ["FORMID"]) #will need to change this to "unique field in Master_List (in the SN database this is JoinGPSID)
+	for row in cursor:
+		FormID = row[0]
+		FormID = FormID.strip()
+		ExistingPt.append(FormID)
+		print ExistingPt
+	del cursor
+	workspace = os.path.dirname(FC_GDB)  #this block of code opens an editing session to run the update cursor
+	edit = arcpy.da.Editor(workspace)
+	edit.startEditing(False, True)
+	edit.startOperation()
+
+	cursor2 = arcpy.da.UpdateCursor(FC_GDB, ["FORMID","TESTEXISTS"]) # iterates through table and populaties Row[1] based on existingpt list
+	for row in cursor2:
+		value = row[0]
+		print value
+
+		if value in ExistingPt:
+			print "Found Point"
+			row[1] = "Exists"
+			cursor2.updateRow(row)
+
+		else:
+			print "New Point"
+			row[1] = "New"
+			cursor2.updateRow(row)
+
+	del cursor2
 
 
-workspace = os.path.dirname(FC_GDB)  #this block of code opens an editing session to run the update cursor
-edit = arcpy.da.Editor(workspace)
-edit.startEditing(False, True)
-edit.startOperation()
+	edit.stopOperation() #this closes the update cursor editing session
+	edit.stopEditing(True)
 
-cursor2 = arcpy.da.UpdateCursor(FC_GDB, ["FORMID","TESTEXISTS"]) # iterates through table and populaties Row[1] based on existingpt list
-for row in cursor2:
-    value = row[0]
-    print value
+	select_table= arcpy.MakeTableView_management(FC_GDB, 'table_view_from_GDB', '"TESTEXISTS" = \'New\'', GDBpath) #creates temporary tbl view in GDB from FC_GDB w/ only records that have "New" in "TESTEXISTS"
 
-    if value in ExistingPt:
-        print "Found Point"
-        row[1] = "Exists"
-        cursor2.updateRow(row)
+	arcpy.Append_management(select_table, SQL_fullpath, "NO_TEST","","") #appends tbl view data into SQL table
 
-    else:
-        print "New Point"
-        row[1] = "New"
-        cursor2.updateRow(row)
-
-del cursor2
+	arcpy.Delete_management(select_table) #deletes temp tbl view
 
 
-edit.stopOperation() #this closes the update cursor editing session
-edit.stopEditing(True)
+FCS = arcpy.ListFeatureClasses() #Gets list of all feature classes, which is the parent form
+Tables = arcpy.ListTables() #Gets list of all tables, which are the child or repeat forms
 
-select_table= arcpy.MakeTableView_management(FC_GDB, 'table_view_from_GDB', '"TESTEXISTS" = \'New\'', GDBpath) #creates temporary tbl view in GDB from FC_GDB w/ only records that have "New" in "TESTEXISTS"
-
-arcpy.Append_management(select_table, SQL_fullpath, "NO_TEST","","") #appends tbl view data into SQL table
-
-arcpy.Delete_management(select_table) #deletes temp tbl view
+for FC in FCS:
+    appendSQL(FC)
+for Table in Tables:
+    appendSQL(Table)
 
 arcpy.SetParameter(1, "True") #output parameter boolean value for modelbuilder
 
